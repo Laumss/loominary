@@ -374,24 +374,13 @@ const extractGeminiMultiBranchData = (jsonData, fileName) => {
 
 // ==================== JSONL 多文件合并工具 ====================
 
-// 简单哈希函数，用于生成消息指纹
-const simpleHash = (str) => {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-  return hash.toString(36);
-};
-
 // 生成消息指纹，用于识别相同消息（不包含时间戳，避免导出时间差异导致误判）
 const generateMessageFingerprint = (entry) => {
   const content = entry.mes || (entry.swipes?.[0] || "");
   const sender = entry.name || "";
   const isUser = entry.is_user || false;
   // 只用 sender + isUser + content 来识别消息，移除时间戳
-  return `${sender}|${isUser}|${simpleHash(content)}`;
+  return JSON.stringify([sender, isUser, content]);
 };
 
 // ==================== 消息图节点类 ====================
@@ -409,7 +398,8 @@ class MessageNode {
 // ==================== 基于内容匹配的多文件合并器 ====================
 class JSONLMerger {
   constructor() {
-    this.nodeMap = new Map();        // fingerprint -> MessageNode
+    this.nodeMap = new Map();        // path node id -> MessageNode
+    this.pathIndex = new Map();      // parent id + message identity -> node id
     this.rootFingerprints = new Set(); // 根消息的指纹集合
   }
 
@@ -420,10 +410,12 @@ class JSONLMerger {
     for (const entry of messages) {
       if (entry.is_system) continue;
 
-      const fp = generateMessageFingerprint(entry);
-
-      // 查找或创建节点
-      if (!this.nodeMap.has(fp)) {
+      // 相同内容仅在相同祖先路径下合并；同文件的重复轮次保留独立身份。
+      const pathKey = JSON.stringify([prevFingerprint, generateMessageFingerprint(entry)]);
+      let fp = this.pathIndex.get(pathKey);
+      if (fp === undefined) {
+        fp = `node_${this.nodeMap.size}`;
+        this.pathIndex.set(pathKey, fp);
         this.nodeMap.set(fp, new MessageNode(fp, entry));
       }
 
@@ -434,9 +426,7 @@ class JSONLMerger {
       if (prevFingerprint) {
         node.parents.add(prevFingerprint);
         const parentNode = this.nodeMap.get(prevFingerprint);
-        if (parentNode) {
-          parentNode.children.add(fp);
-        }
+        parentNode.children.add(fp);
       } else {
         // 这是该文件的第一条消息
         node.isRoot = true;
