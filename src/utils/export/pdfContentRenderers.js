@@ -906,15 +906,25 @@ export class ContentRenderer {
         textWidth = this.safeGetTextWidth(text);
       }
 
-      const availableWidth = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_RIGHT - currentX;
-
       // 检查是否需要换行
-      if (currentX + textWidth > PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_RIGHT && currentLineSegments.length > 0) {
+      if (currentX + textWidth > PDF_STYLES.MARGIN_LEFT + maxWidth && currentLineSegments.length > 0) {
         this.checkPageBreak(fontSize);
         this.renderHeadingLine(currentLineSegments, fontSize);
         this.currentY += headingLineHeight;
         currentX = PDF_STYLES.MARGIN_LEFT;
         currentLineSegments = [];
+      }
+
+      // 新行上的超宽文本也必须拆分；LaTeX 保留原有不可分割契约。
+      if (segment.type !== 'latex-inline' && textWidth > maxWidth) {
+        const splitLines = this.pdf.splitTextToSize(text, maxWidth);
+        for (let i = 0; i < splitLines.length - 1; i++) {
+          this.checkPageBreak(fontSize);
+          this.renderHeadingLine([{ ...segment, text: splitLines[i], x: PDF_STYLES.MARGIN_LEFT }], fontSize);
+          this.currentY += headingLineHeight;
+        }
+        text = splitLines[splitLines.length - 1];
+        textWidth = this.safeGetTextWidth(text);
       }
 
       // 添加到当前行
