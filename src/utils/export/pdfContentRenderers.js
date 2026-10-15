@@ -1099,10 +1099,10 @@ export class ContentRenderer {
     /**
      * 渲染单行的辅助函数（支持多行单元格）
      */
-    const renderTableRow = (row, rowStartY, rowHeight) => {
+    const renderTableRow = (row, rowStartY, rowHeight, offset = 0, count = Infinity) => {
       row.cells.forEach((cell, colIdx) => {
         const cellX = PDF_STYLES.MARGIN_LEFT + colIdx * cellWidth;
-        const cellLines = row.processedCells ? row.processedCells[colIdx] : calculateCellLines(cell);
+        const cellLines = row.processedCells[colIdx].slice(offset, offset + count);
 
         // 表头背景
         if (row.isHeader) {
@@ -1149,35 +1149,37 @@ export class ContentRenderer {
     // 计算表头高度（如果有表头）
     const headerRowHeight = headerRow ? headerRow.height : 0;
 
-    // 渲染所有行
-    rows.forEach((row, rowIdx) => {
-      const rowHeight = row.height;
-
-      // 检查是否需要换页
-      const needsPageBreak = this.currentY + rowHeight > PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM;
-
-      if (needsPageBreak && rowIdx > 0) {
-        // 换页
-        this.pdf.addPage();
-        this.currentY = PDF_STYLES.MARGIN_TOP;
-
-        // 在新页顶部重绘表头（续表）
-        if (headerRow) {
-          // 添加"续表"标记
-          this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_TIMESTAMP);
-          this.pdf.setTextColor(150, 150, 150);
-          this.pdf.text('(续表)', PDF_STYLES.MARGIN_LEFT, this.currentY);
-          this.currentY += PDF_STYLES.LINE_HEIGHT * 0.8;
-
-          // 重绘表头
-          renderTableRow(headerRow, this.currentY, headerRowHeight);
-          this.currentY += headerRowHeight;
+    const bottom = PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM;
+    const minimumHeight = Math.max(baseRowHeight, PDF_STYLES.LINE_HEIGHT + TABLE_CELL_PADDING * 2);
+    rows.forEach(row => {
+      const lineCount = Math.max(1, ...row.processedCells.map(lines => lines.length));
+      let offset = 0;
+      while (offset < lineCount) {
+        const remainingHeight = Math.max(baseRowHeight,
+          (lineCount - offset) * PDF_STYLES.LINE_HEIGHT + TABLE_CELL_PADDING * 2);
+        const fullPageHeight = bottom - PDF_STYLES.MARGIN_TOP;
+        if (this.currentY + minimumHeight > bottom ||
+            (remainingHeight <= fullPageHeight && this.currentY + remainingHeight > bottom)) {
+          this.pdf.addPage();
+          this.currentY = PDF_STYLES.MARGIN_TOP;
+          // Repeat only a complete header that leaves room for data progress.
+          if (!row.isHeader && headerRow &&
+              headerRowHeight + PDF_STYLES.LINE_HEIGHT * 0.8 + minimumHeight <= fullPageHeight) {
+            this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_TIMESTAMP);
+            this.pdf.setTextColor(150, 150, 150);
+            this.pdf.text('(续表)', PDF_STYLES.MARGIN_LEFT, this.currentY);
+            this.currentY += PDF_STYLES.LINE_HEIGHT * 0.8;
+            renderTableRow(headerRow, this.currentY, headerRowHeight);
+            this.currentY += headerRowHeight;
+          }
         }
+        const count = Math.min(lineCount - offset,
+          Math.floor((bottom - this.currentY - TABLE_CELL_PADDING * 2) / PDF_STYLES.LINE_HEIGHT));
+        const height = Math.max(baseRowHeight, count * PDF_STYLES.LINE_HEIGHT + TABLE_CELL_PADDING * 2);
+        renderTableRow(row, this.currentY, height, offset, count);
+        this.currentY += height;
+        offset += count;
       }
-
-      const rowStartY = this.currentY;
-      renderTableRow(row, rowStartY, rowHeight);
-      this.currentY = rowStartY + rowHeight;
     });
 
     this.safeSetFont(this.chineseFontName, 'normal');
