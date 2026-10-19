@@ -614,22 +614,8 @@ export class LaTeXRenderer {
       return simplified.split('').map(char => SUPERSCRIPT_MAP[char]).join('');
     }
     
-    // 混合策略：能映射的映射，不能的组合输出
-    // 如果整体较短且简单，直接用 Unicode
-    const result = simplified.split('').map(char => {
-      if (SUPERSCRIPT_MAP[char]) return SUPERSCRIPT_MAP[char];
-      // 对于无映射的字符（如希腊字母），保持原样但标记上标位置
-      return char;
-    }).join('');
-    
-    // 如果结果中有无法映射的字符，检测是否含有非上标字符
-    const hasUnmapped = simplified.split('').some(char => !SUPERSCRIPT_MAP[char]);
-    if (hasUnmapped && simplified.length > 1) {
-      // 对于复杂上标内容，用紧凑格式标记
-      return '⁽' + result + '⁾';
-    }
-    
-    return result;
+    // 无完整 Unicode 上标映射时保留显式幂记法；字体可能不支持上标括号。
+    return '^(' + simplified + ')';
   }
 
   /**
