@@ -351,7 +351,7 @@ export function parseInlineMarkdown(text) {
  * @returns {string[]} - 调整后的文本行数组
  */
 export function applyCJKPunctuationRules(lines) {
-  if (!lines || lines.length <= 1) return lines;
+  if (lines.length <= 1) return lines;
 
   // 不能出现在行首的标点（避头）
   const noLineStart = /^[。，、；：！？）》」』】"',.;:!?)}\]]/;
@@ -370,11 +370,10 @@ export function applyCJKPunctuationRules(lines) {
       const punct = currentLine[0];
       prevLine = prevLine + punct;
       lines[i] = currentLine.substring(1);
-      continue;
     }
 
     // 检查上一行结尾是否有不能在行尾的标点
-    if (noLineEnd.test(prevLine)) {
+    else if (noLineEnd.test(prevLine)) {
       // 将标点移到当前行开头
       const punct = prevLine[prevLine.length - 1];
       prevLine = prevLine.substring(0, prevLine.length - 1);
