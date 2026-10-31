@@ -92,22 +92,14 @@ export const extractChatGPTData = (jsonData, fileName = '') => {
 
     // 保存 nodeId 到消息对象的映射，便于设置 parent_uuid
     const nodeIdToMessage = new Map();
-    let lastUserMessage = null;
-
-    // 用于缓存当前助手消息的思考内容和工具调用
-    let pendingThinking = '';
-    let pendingTools = [];
-    // 用于缓存assistant消息的推理概要内容（reasoning_recap）。
-    // reasoning_recap 通常只是表示"已思考X秒"等信息，不应该单独生成消息，否则会导致分支预览显示该概要内容。
-    // 我们在生成最终输出消息时，将其作为前缀添加到display_text中。
-    let pendingRecap = '';
-
-    // 用于缓存由工具产生的附件。这些附件应在下一条助手最终输出消息上附加。
-    // 部分工具（如 python_user_visible、web.run 等）会在 tool 消息的 metadata.attachments 中提供文件列表。
-    let pendingAttachments = [];
-    
-    // 用于缓存助手生成的图片（关联到用户消息的 assistant_generated）
-    let pendingAssistantGeneratedImages = [];
+    const initialContext = {
+      lastUserMessage: null,
+      pendingThinking: '',
+      pendingTools: [],
+      pendingRecap: '',
+      pendingAttachments: [],
+      pendingAssistantGeneratedImages: []
+    };
 
     /**
      * 寻找某节点祖先链上最近的已生成消息，用于确定 parent_uuid
@@ -172,10 +164,23 @@ export const extractChatGPTData = (jsonData, fileName = '') => {
     };
 
     // 递归遍历节点，深度优先
-    const traverse = (nodeId) => {
+    const traverse = (nodeId, context) => {
       const node = mapping[nodeId];
       if (!node) return;
       const msg = node.message;
+      let { lastUserMessage, pendingThinking, pendingRecap,
+        pendingAssistantGeneratedImages } = context;
+      // 子分支继承共同祖先的上下文，但不共享可变的暂存集合。
+      let pendingTools = context.pendingTools.map(tool => ({ ...tool }));
+      let pendingAttachments = [...context.pendingAttachments];
+      const traverseChildren = () => {
+        if (node.children && Array.isArray(node.children)) {
+          node.children.forEach(childId => traverse(childId, {
+            lastUserMessage, pendingThinking, pendingTools, pendingRecap,
+            pendingAttachments, pendingAssistantGeneratedImages
+          }));
+        }
+      };
 
       // 当 message 存在时才处理消息内容，但无论如何都要遍历子节点
       if (msg) {
@@ -185,9 +190,7 @@ export const extractChatGPTData = (jsonData, fileName = '') => {
 
         // 如果该消息被标记为对话中隐藏，则跳过对话解析，但仍需遍历子节点
         if (metadata && metadata.is_visually_hidden_from_conversation) {
-          if (node.children && Array.isArray(node.children)) {
-            node.children.forEach(childId => traverse(childId));
-          }
+          traverseChildren();
           return;
         }
 
@@ -347,6 +350,10 @@ export const extractChatGPTData = (jsonData, fileName = '') => {
               .addTools(pendingTools.map(t => ({ ...t })))
               .finalize(false);
 
+            // recap 属于最终显示文本，不改写原始正文或生成额外消息。
+            if (pendingRecap) {
+              messageData.display_text = pendingRecap + '\n\n' + messageData.display_text;
+            }
             messageData._node_id = nodeId;
             if (imageAttachment) messageData.attachments.unshift(imageAttachment);
             if (pendingAttachments.length > 0) {
@@ -382,6 +389,10 @@ export const extractChatGPTData = (jsonData, fileName = '') => {
 
             chatHistory.push(messageData);
             nodeIdToMessage.set(nodeId, messageData);
+            // 最终输出消费当前响应的暂存状态；兄弟分支仍继承其共同祖先。
+            pendingThinking = '';
+            pendingTools = [];
+            pendingRecap = '';
           }
         }
         // === 工具消息 ===
@@ -436,8 +447,7 @@ export const extractChatGPTData = (jsonData, fileName = '') => {
 
             if (pendingTools.length > 0) {
               const lastTool = pendingTools[pendingTools.length - 1];
-              lastTool.result = lastTool.result || {};
-              lastTool.result.groups = mappedGroups;
+              lastTool.result = { ...lastTool.result, groups: mappedGroups };
               if (queries.length > 0) lastTool.result.queries = queries;
             } else {
               const resultObj = { groups: mappedGroups };
@@ -455,14 +465,12 @@ export const extractChatGPTData = (jsonData, fileName = '') => {
       }
 
       // 递归子节点
-      if (node.children && Array.isArray(node.children)) {
-        node.children.forEach(childId => traverse(childId));
-      }
+      traverseChildren();
     };
 
     // 按根节点顺序遍历
     rootNodeIds.forEach(rootId => {
-      traverse(rootId);
+      traverse(rootId, initialContext);
     });
 
     const processed = {
